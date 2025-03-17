@@ -33,6 +33,9 @@ export default function Home() {
             )
             }
             {/**prompt */}
+            <p className="text-xs absolute bottom-1 text-gray-500">
+              AI-generated, for reference only
+            </p>
            </div>
       </div>
     </div>

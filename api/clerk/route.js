@@ -1,36 +1,38 @@
 import { Webhook } from "svix";
 import connectDB from "@/config/db";
 import User from "@/models/User";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
 export async function POST(req) {
     try {
-        if (!process.env.SIGNING_SECRET) {
-            throw new Error("SIGNING_SECRET is missing in environment variables");
-        }
+        console.log("🔹 Clerk Webhook received at /api/clerk");
 
-        // Initialize Webhook with secret key
-        const wh = new Webhook(process.env.SIGNING_SECRET);
+        // Parse request body
+        const payload = await req.json();
+        console.log("🔹 Raw Payload:", payload);
 
-        // Retrieve headers (No need for `await`)
-        const headerPayload = headers();
+        // Extract headers
+        const headers = Object.fromEntries(req.headers);
+        console.log("🔹 Headers:", headers);
+
+        // Extract Svix headers
         const svixHeaders = {
-            "svix-id": headerPayload.get("svix-id"),
-            "svix-timestamp": headerPayload.get("svix-timestamp"),
-            "svix-signature": headerPayload.get("svix-signature"),
+            "svix-id": headers["svix-id"],
+            "svix-timestamp": headers["svix-timestamp"],
+            "svix-signature": headers["svix-signature"],
         };
 
-        if (!svixHeaders["svix-id"] || !svixHeaders["svix-timestamp"] || !svixHeaders["svix-signature"]) {
-            return NextResponse.json({ error: "Missing Svix headers" }, { status: 400 });
-        }
+        console.log("🔹 Svix Headers:", svixHeaders);
 
-        // Get the payload and verify it
-        const payload = await req.json();
-        const body = JSON.stringify(payload);
-        const { data, type } = wh.verify(body, svixHeaders);
+        // Verify Signature
+        const wh = new Webhook(process.env.SIGNING_SECRET);
+        const { data, type } = wh.verify(JSON.stringify(payload), svixHeaders);
+        console.log(`✅ Verified event: ${type}`);
 
-        // Prepare user data to save
+        // Connect to MongoDB
+        await connectDB();
+
+        // Prepare user data
         const userData = {
             _id: data.id,
             email: data.email_addresses?.[0]?.email_address || "",
@@ -38,17 +40,13 @@ export async function POST(req) {
             image: data.image_url || "",
         };
 
-        // Connect to the database
-        await connectDB();
-
-        // Handle different event types
         switch (type) {
             case "user.created":
                 await User.create(userData);
                 console.log(`✅ User created: ${userData.email}`);
                 break;
             case "user.updated":
-                await User.findByIdAndUpdate(data.id, userData, { new: true });
+                await User.findByIdAndUpdate(data.id, userData);
                 console.log(`✅ User updated: ${userData.email}`);
                 break;
             case "user.deleted":
@@ -56,13 +54,12 @@ export async function POST(req) {
                 console.log(`✅ User deleted: ${data.id}`);
                 break;
             default:
-                console.warn(`⚠️ Unhandled event type: ${type}`);
-                break;
+                console.log(`ℹ️ Unhandled event type: ${type}`);
         }
 
-        return NextResponse.json({ message: "Event received" }, { status: 200 });
+        return NextResponse.json({ message: "Webhook processed successfully" });
     } catch (error) {
-        console.error("❌ Error processing webhook:", error.message);
+        console.error("❌ Webhook error:", error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
